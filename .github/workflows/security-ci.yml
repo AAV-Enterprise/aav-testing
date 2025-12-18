@@ -1,0 +1,36 @@
+name: Security CI (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      run_semgrep:
+        type: boolean
+        default: true
+      run_gitleaks:
+        type: boolean
+        default: true
+
+jobs:
+  gitleaks:
+    if: ${{ inputs.run_gitleaks }}
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source . --redact --no-git
+
+  semgrep:
+    if: ${{ inputs.run_semgrep }}
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep (auto rules)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/default
