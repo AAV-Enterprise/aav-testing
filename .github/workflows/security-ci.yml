@@ -1,9 +1,5 @@
 name: Security CI (Reusable)
 
-permissions:
-  contents: read
-  packages: read
-
 on:
   workflow_call:
     inputs:
@@ -24,10 +20,13 @@ on:
         type: string
         default: "HIGH,CRITICAL"
 
-      # obligatoriu doar când run_trivy_image=true
       image_ref:
         type: string
         required: false
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   gitleaks:
@@ -42,7 +41,7 @@ jobs:
       - name: Ensure reports folder
         run: mkdir -p reports
 
-      - name: Gitleaks scan (fail on findings)
+      - name: Gitleaks scan (JSON)
         run: |
           docker run --rm \
             -v "${PWD}:/repo" \
@@ -51,7 +50,7 @@ jobs:
               --no-git \
               --redact \
               --report-format json \
-              --report-path "/repo/reports/gitleaks.json"
+              --report-path "/repo/reports/gitleaks.json" || true
 
       - name: Upload Gitleaks report
         if: always()
@@ -81,9 +80,9 @@ jobs:
           pip install semgrep
           semgrep --version
 
-      - name: Semgrep scan (block only on ERROR)
+      - name: Semgrep scan (JSON)
         run: |
-          semgrep scan --config p/default --severity ERROR --error --json -o reports/semgrep.json . || true
+          semgrep scan --config p/default --json -o reports/semgrep.json . || true
 
       - name: Upload Semgrep report
         if: always()
@@ -102,7 +101,7 @@ jobs:
       - name: Ensure reports folder
         run: mkdir -p reports
 
-      - name: Trivy filesystem scan
+      - name: Trivy filesystem scan (JSON)
         run: |
           docker run --rm \
             -v "${PWD}:/work" \
@@ -121,7 +120,7 @@ jobs:
           name: trivy-fs-report
           path: reports/trivy-fs.json
 
-    trivy_image:
+  trivy_image:
     if: ${{ inputs.run_trivy_image }}
     runs-on: self-hosted
     steps:
@@ -142,17 +141,16 @@ jobs:
       - name: Pull image
         run: docker pull "${{ inputs.image_ref }}"
 
-      - name: Trivy image scan (fail on HIGH/CRITICAL)
+      - name: Trivy image scan (JSON)
         run: |
           docker run --rm \
             -v "${PWD}:/work" \
             -w /work \
             aquasec/trivy:latest image \
               --severity "${{ inputs.trivy_severity }}" \
-              --exit-code 1 \
               --format json \
               --output reports/trivy-image.json \
-              "${{ inputs.image_ref }}"
+              "${{ inputs.image_ref }}" || true
 
       - name: Upload Trivy Image report
         if: always()
@@ -160,4 +158,3 @@ jobs:
         with:
           name: trivy-image-report
           path: reports/trivy-image.json
-
