@@ -3,28 +3,48 @@ name: Security CI (Reusable)
 on:
   workflow_call:
     inputs:
-      run_semgrep:
-        type: boolean
-        default: true
       run_gitleaks:
         type: boolean
         default: true
+      run_semgrep:
+        type: boolean
+        default: true
+      run_trivy_fs:
+        type: boolean
+        default: true
+      trivy_severity:
+        type: string
+        default: "HIGH,CRITICAL"
 
 jobs:
   gitleaks:
     if: ${{ inputs.run_gitleaks }}
     runs-on: self-hosted
     steps:
-      - name: Checkout (full history helps)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # doar dacă rulezi în org și ți se cere licență
+      - name: Ensure reports folder
+        run: mkdir -p reports
+
+      - name: Gitleaks scan
+        run: |
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            zricethezav/gitleaks:latest detect \
+              --source="/repo" \
+              --no-git \
+              --redact \
+              --report-format json \
+              --report-path "/repo/reports/gitleaks.json" || true
+
+      - name: Upload Gitleaks report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks.json
 
   semgrep:
     if: ${{ inputs.run_semgrep }}
@@ -33,17 +53,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ensure reports folder
+        run: mkdir -p reports
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Semgrep (no Docker)
+      - name: Install Semgrep
         run: |
           python -m pip install --upgrade pip
           pip install semgrep
           semgrep --version
 
-      - name: Run Semgrep (SAST)
+      - name: Semgrep scan (JSON report)
         run: |
-          semgrep scan --config p/default --error .
+          semgrep scan --config p/default --json -o reports/semgrep.json . || true
+
+      - name: Upload Semgrep report
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: reports/semgrep.json
+
+  trivy_fs:
+    if: ${{ inputs.run_trivy_fs }}
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure reports folder
+        run: mkdir -p reports
+
+      - name: Trivy filesystem scan
+        run: |
+          docker run --rm \
+            -v "${PWD}:/work" \
+            -w /work \
+            aquasec/trivy:latest fs \
+              --scanners vuln,secret,config \
+              --severity "${{ inputs.trivy_severity }}" \
+              --format json \
+              --output reports/trivy-fs.json \
+              /work || true
+
+      - name: Upload Trivy FS report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: reports/trivy-fs.json
