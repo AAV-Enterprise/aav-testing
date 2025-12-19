@@ -12,9 +12,18 @@ on:
       run_trivy_fs:
         type: boolean
         default: true
+      run_trivy_image:
+        type: boolean
+        default: false
+
       trivy_severity:
         type: string
         default: "HIGH,CRITICAL"
+
+      # obligatoriu doar când run_trivy_image=true
+      image_ref:
+        type: string
+        required: false
 
 jobs:
   gitleaks:
@@ -29,7 +38,7 @@ jobs:
       - name: Ensure reports folder
         run: mkdir -p reports
 
-      - name: Gitleaks scan
+      - name: Gitleaks scan (fail on findings)
         run: |
           docker run --rm \
             -v "${PWD}:/repo" \
@@ -38,9 +47,10 @@ jobs:
               --no-git \
               --redact \
               --report-format json \
-              --report-path "/repo/reports/gitleaks.json" || true
+              --report-path "/repo/reports/gitleaks.json"
 
       - name: Upload Gitleaks report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-report
@@ -67,11 +77,12 @@ jobs:
           pip install semgrep
           semgrep --version
 
-      - name: Semgrep scan (JSON report)
+      - name: Semgrep scan (fail on findings)
         run: |
-          semgrep scan --config p/default --json -o reports/semgrep.json . || true
+          semgrep scan --config p/default --error --json -o reports/semgrep.json .
 
       - name: Upload Semgrep report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: semgrep-report
@@ -87,7 +98,7 @@ jobs:
       - name: Ensure reports folder
         run: mkdir -p reports
 
-      - name: Trivy filesystem scan
+      - name: Trivy filesystem scan (fail on HIGH/CRITICAL)
         run: |
           docker run --rm \
             -v "${PWD}:/work" \
@@ -95,12 +106,50 @@ jobs:
             aquasec/trivy:latest fs \
               --scanners vuln,secret,config \
               --severity "${{ inputs.trivy_severity }}" \
+              --exit-code 1 \
               --format json \
               --output reports/trivy-fs.json \
-              /work || true
+              /work
 
       - name: Upload Trivy FS report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-fs-report
           path: reports/trivy-fs.json
+
+  trivy_image:
+    if: ${{ inputs.run_trivy_image }}
+    runs-on: self-hosted
+    steps:
+      - name: Ensure reports folder
+        run: mkdir -p reports
+
+      - name: Validate image_ref
+        run: |
+          if [ -z "${{ inputs.image_ref }}" ]; then
+            echo "image_ref is required when run_trivy_image=true"
+            exit 2
+          fi
+
+      - name: Pull image
+        run: docker pull "${{ inputs.image_ref }}"
+
+      - name: Trivy image scan (fail on HIGH/CRITICAL)
+        run: |
+          docker run --rm \
+            -v "${PWD}:/work" \
+            -w /work \
+            aquasec/trivy:latest image \
+              --severity "${{ inputs.trivy_severity }}" \
+              --exit-code 1 \
+              --format json \
+              --output reports/trivy-image.json \
+              "${{ inputs.image_ref }}"
+
+      - name: Upload Trivy Image report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: reports/trivy-image.json
