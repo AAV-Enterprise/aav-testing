@@ -79,7 +79,7 @@ jobs:
 
       - name: Semgrep scan (fail on findings)
         run: |
-          semgrep scan --config p/default --error --json -o reports/semgrep.json .
+          semgrep scan --config p/default --severity ERROR --error --json -o reports/semgrep.json .
 
       - name: Upload Semgrep report
         if: always()
