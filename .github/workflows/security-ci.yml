@@ -27,6 +27,9 @@ on:
       run_dast_zap:
         type: boolean
         default: false
+      zap_target:
+        type: string
+        default: "http://localhost:8080"
 
 
 permissions:
@@ -181,19 +184,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Start application (docker-compose)
+      - name: Start app via docker compose
         run: |
           docker compose -f docker-compose.ci.yml up -d
-          sleep 10
+          echo "Waiting app..."
+          for i in $(seq 1 30); do
+            curl -fsS "${{ inputs.zap_target }}/health" && exit 0
+            sleep 2
+          done
+          echo "App did not become healthy"
+          docker compose -f docker-compose.ci.yml logs
+          exit 1
 
-      - name: ZAP Baseline Scan
+      - name: Run ZAP baseline
         run: |
           docker run --rm \
             --network host \
             -v "${PWD}:/zap/wrk" \
             zaproxy/zap-stable \
             zap-baseline.py \
-              -t http://localhost:8080 \
+              -t "${{ inputs.zap_target }}" \
               -r zap-report.html || true
 
       - name: Upload ZAP report
@@ -202,3 +212,8 @@ jobs:
         with:
           name: zap-report
           path: zap-report.html
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
