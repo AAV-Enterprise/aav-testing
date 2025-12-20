@@ -157,12 +157,22 @@ jobs:
               --output reports/trivy-image.json \
               "${{ inputs.image_ref }}" || true
 
+      - name: Upload Trivy Image report (if present)
+        if: always()
+        run: |
+          if [ -f reports/trivy-image.json ]; then
+            echo "Report exists"
+          else
+            echo "{}" > reports/trivy-image.json
+          fi
+
       - name: Upload Trivy Image report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-image-report
           path: reports/trivy-image.json
+
 
   dast_zap:
     if: ${{ inputs.run_dast_zap }}
