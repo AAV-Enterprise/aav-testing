@@ -237,26 +237,31 @@ jobs:
         run: |
           docker compose -f docker-compose.ci.yml up -d
           echo "Waiting for app health..."
-          for i in $(seq 1 30); do
-            curl -fsS "${{ inputs.zap_target }}/health" && exit 0
+          for i in $(seq 1 40); do
+            if curl -fsS "http://localhost:8080/health" >/dev/null; then
+              echo "App is healthy"
+              exit 0
+            fi
             sleep 2
           done
-          docker compose logs
+          echo "App did not become healthy"
+          docker compose -f docker-compose.ci.yml logs
           exit 1
 
-      - name: ZAP Active Scan (SQLi + XSS)
+      - name: OWASP ZAP Full Scan (Active)
         run: |
           docker run --rm \
             --network host \
             -v "${PWD}:/zap/wrk" \
             zaproxy/zap-stable \
             zap-full-scan.py \
-              -t "${{ inputs.zap_target }}" \
+              -t "http://localhost:8080" \
               -a \
+              -j \
               -r zap-active-report.html \
               -J zap-active-report.json || true
 
-      - name: Upload ZAP Active report
+      - name: Upload ZAP Active reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -268,4 +273,5 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f docker-compose.ci.yml down -v
+
 
