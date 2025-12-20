@@ -24,6 +24,11 @@ on:
         type: string
         required: false
 
+      run_dast_zap:
+        type: boolean
+        default: false
+
+
 permissions:
   contents: read
   packages: read
@@ -158,3 +163,32 @@ jobs:
         with:
           name: trivy-image-report
           path: reports/trivy-image.json
+
+  dast_zap:
+    if: ${{ inputs.run_dast_zap }}
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start application (docker-compose)
+        run: |
+          docker compose -f docker-compose.ci.yml up -d
+          sleep 10
+
+      - name: ZAP Baseline Scan
+        run: |
+          docker run --rm \
+            --network host \
+            -v "${PWD}:/zap/wrk" \
+            zaproxy/zap-stable \
+            zap-baseline.py \
+              -t http://localhost:8080 \
+              -r zap-report.html || true
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap-report.html
