@@ -230,22 +230,39 @@ jobs:
     if: ${{ inputs.run_dast_zap_active }}
     runs-on: self-hosted
     steps:
+      - name: Docker access check
+        shell: bash
+        run: |
+          id
+          docker info
+
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Start app via docker compose
+      - name: Wait for app health (debug-friendly)
+        shell: bash
         run: |
-          docker compose -f docker-compose.ci.yml up -d
-          echo "Waiting for app health..."
-          for i in $(seq 1 40); do
-            if curl -fsS "http://localhost:8080/health" >/dev/null; then
-              echo "App is healthy"
+          set -euo pipefail
+          URL="${{ inputs.zap_target }}/health"
+          echo "Waiting for: $URL"
+
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /tmp/health_body.txt -w "%{http_code}" "$URL" || true)"
+            if [ "$code" = "200" ]; then
+              echo "App is healthy (200)"
               exit 0
             fi
+
+            echo "Attempt $i: HTTP $code"
+            echo "Body:"
+            sed -e 's/./&/g' /tmp/health_body.txt | head -n 30 || true
             sleep 2
           done
-          echo "App did not become healthy"
-          docker compose -f docker-compose.ci.yml logs
+
+          echo "App did not become healthy. Showing compose status + logs:"
+          docker compose -f docker-compose.ci.yml ps || true
+          docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
           exit 1
 
       - name: OWASP ZAP Full Scan (Active)
@@ -272,6 +289,9 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f docker-compose.ci.yml down -v
+        run: |
+          docker compose -f docker-compose.ci.yml down -v || true
+          docker ps -aq | xargs -r docker rm -f || true
+
 
 
