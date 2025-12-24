@@ -191,7 +191,7 @@ jobs:
 
       - name: Start app via docker compose
         run: |
-          docker compose -f docker-compose.ci.yml up -d
+          docker compose -f docker-compose.ci.yml up -d --build
           echo "Waiting app..."
           for i in $(seq 1 30); do
             curl -fsS "${{ inputs.zap_target }}/health" && exit 0
@@ -224,7 +224,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f docker-compose.ci.yml down -v
+        run: docker compose -f docker-compose.ci.yml down -v --remove-orphans || true
 
   dast_zap_active:
     if: ${{ inputs.run_dast_zap_active }}
@@ -235,7 +235,6 @@ jobs:
         run: |
           id
           docker info
-
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -292,6 +291,7 @@ jobs:
         run: |
           docker compose -f docker-compose.ci.yml down -v || true
           docker ps -aq | xargs -r docker rm -f || true
+
 
 
 
