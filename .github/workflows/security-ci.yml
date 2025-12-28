@@ -35,8 +35,6 @@ on:
         type: boolean
         default: false
 
-
-
 permissions:
   contents: read
   packages: read
@@ -55,6 +53,7 @@ jobs:
         run: mkdir -p reports
 
       - name: Gitleaks scan (JSON)
+        shell: bash
         run: |
           docker run --rm \
             -v "${PWD}:/repo" \
@@ -64,6 +63,11 @@ jobs:
               --redact \
               --report-format json \
               --report-path "/repo/reports/gitleaks.json" || true
+
+      - name: Ensure report exists
+        if: always()
+        run: |
+          [ -f reports/gitleaks.json ] || echo "{}" > reports/gitleaks.json
 
       - name: Upload Gitleaks report
         if: always()
@@ -88,14 +92,21 @@ jobs:
           python-version: "3.11"
 
       - name: Install Semgrep
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install semgrep
           semgrep --version
 
       - name: Semgrep scan (JSON)
+        shell: bash
         run: |
           semgrep scan --config p/default --json -o reports/semgrep.json . || true
+
+      - name: Ensure report exists
+        if: always()
+        run: |
+          [ -f reports/semgrep.json ] || echo "{}" > reports/semgrep.json
 
       - name: Upload Semgrep report
         if: always()
@@ -115,6 +126,7 @@ jobs:
         run: mkdir -p reports
 
       - name: Trivy filesystem scan (JSON)
+        shell: bash
         run: |
           docker run --rm \
             -v "${PWD}:/work" \
@@ -125,6 +137,11 @@ jobs:
               --format json \
               --output reports/trivy-fs.json \
               /work || true
+
+      - name: Ensure report exists
+        if: always()
+        run: |
+          [ -f reports/trivy-fs.json ] || echo "{}" > reports/trivy-fs.json
 
       - name: Upload Trivy FS report
         if: always()
@@ -141,6 +158,7 @@ jobs:
         run: mkdir -p reports
 
       - name: Validate image_ref
+        shell: bash
         run: |
           if [ -z "${{ inputs.image_ref }}" ]; then
             echo "image_ref is required when run_trivy_image=true"
@@ -148,6 +166,7 @@ jobs:
           fi
 
       - name: Log in to GHCR
+        shell: bash
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
@@ -155,6 +174,7 @@ jobs:
         run: docker pull "${{ inputs.image_ref }}"
 
       - name: Trivy image scan (JSON)
+        shell: bash
         run: |
           docker run --rm \
             -v "${PWD}:/work" \
@@ -165,14 +185,10 @@ jobs:
               --output reports/trivy-image.json \
               "${{ inputs.image_ref }}" || true
 
-      - name: Upload Trivy Image report (if present)
+      - name: Ensure report exists
         if: always()
         run: |
-          if [ -f reports/trivy-image.json ]; then
-            echo "Report exists"
-          else
-            echo "{}" > reports/trivy-image.json
-          fi
+          [ -f reports/trivy-image.json ] || echo "{}" > reports/trivy-image.json
 
       - name: Upload Trivy Image report
         if: always()
@@ -181,53 +197,8 @@ jobs:
           name: trivy-image-report
           path: reports/trivy-image.json
 
-
   dast_zap:
     if: ${{ inputs.run_dast_zap }}
-    runs-on: self-hosted
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Start app via docker compose
-        run: |
-          docker compose -f docker-compose.ci.yml up -d --build
-          echo "Waiting app..."
-          for i in $(seq 1 30); do
-            curl -fsS "${{ inputs.zap_target }}/health" && exit 0
-            sleep 2
-          done
-          echo "App did not become healthy"
-          docker compose -f docker-compose.ci.yml logs
-          exit 1
-
-      - name: Run ZAP baseline
-        run: |
-          docker run --rm \
-          --network host \
-          -v "${PWD}:/zap/wrk" \
-          zaproxy/zap-stable \
-          zap-baseline.py \
-            -t "${{ inputs.zap_target }}" \
-            -I \
-            -s \
-            -r zap-report.html -J zap-report.json || true
-
-      - name: Upload ZAP report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-report
-          path: | 
-            zap-report.html
-            zap-report.json
-
-      - name: Tear down
-        if: always()
-        run: docker compose -f docker-compose.ci.yml down -v --remove-orphans || true
-
-  dast_zap_active:
-    if: ${{ inputs.run_dast_zap_active }}
     runs-on: self-hosted
     steps:
       - name: Docker access check
@@ -238,6 +209,46 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Preflight - ensure port 8080 is free
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "== Docker containers publishing 8080 =="
+          docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" | (head -n 1; grep -E "0\.0\.0\.0:8080->|:::8080->" || true)
+
+          ids="$(docker ps -q --filter "publish=8080" || true)"
+          if [ -n "${ids}" ]; then
+            echo "Stopping containers publishing 8080: ${ids}"
+            docker stop ${ids} || true
+            docker rm -f ${ids} || true
+          fi
+
+          echo "== Host processes listening on 8080 (if any) =="
+          if command -v ss >/dev/null 2>&1; then
+            ss -ltnp | grep -E ":8080\s" || true
+            if ss -ltnp | grep -qE ":8080\s"; then
+              echo "ERROR: Port 8080 is still in use by a host process. Stop that service on the runner."
+              exit 1
+            fi
+          elif command -v lsof >/dev/null 2>&1; then
+            lsof -iTCP:8080 -sTCP:LISTEN || true
+            # lsof returns 0 when found, 1 when not
+            if lsof -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+              echo "ERROR: Port 8080 is still in use by a host process. Stop that service on the runner."
+              exit 1
+            fi
+          else
+            echo "Neither ss nor lsof available. Skipping host process check."
+          fi
+
+      - name: Start app via docker compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          export COMPOSE_PROJECT_NAME="demoapp_${{ github.run_id }}_${{ github.run_attempt }}_baseline"
+          docker compose -f docker-compose.ci.yml up -d --build
 
       - name: Wait for app health (debug-friendly)
         shell: bash
@@ -255,7 +266,121 @@ jobs:
 
             echo "Attempt $i: HTTP $code"
             echo "Body:"
-            sed -e 's/./&/g' /tmp/health_body.txt | head -n 30 || true
+            head -n 40 /tmp/health_body.txt || true
+            sleep 2
+          done
+
+          echo "App did not become healthy. Showing compose status + logs:"
+          docker compose -f docker-compose.ci.yml ps || true
+          docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
+          exit 1
+
+      - name: Run ZAP baseline
+        shell: bash
+        run: |
+          docker run --rm \
+            --network host \
+            -v "${PWD}:/zap/wrk" \
+            zaproxy/zap-stable \
+            zap-baseline.py \
+              -t "${{ inputs.zap_target }}" \
+              -I \
+              -s \
+              -r zap-report.html \
+              -J zap-report.json || true
+
+      - name: Ensure ZAP baseline report files exist
+        if: always()
+        shell: bash
+        run: |
+          [ -f zap-report.html ] || echo "<html><body>No report generated</body></html>" > zap-report.html
+          [ -f zap-report.json ] || echo "{}" > zap-report.json
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            zap-report.html
+            zap-report.json
+
+      - name: Tear down
+        if: always()
+        shell: bash
+        run: |
+          export COMPOSE_PROJECT_NAME="demoapp_${{ github.run_id }}_${{ github.run_attempt }}_baseline"
+          docker compose -f docker-compose.ci.yml down -v --remove-orphans || true
+
+  dast_zap_active:
+    if: ${{ inputs.run_dast_zap_active }}
+    runs-on: self-hosted
+    steps:
+      - name: Docker access check
+        shell: bash
+        run: |
+          id
+          docker info
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight - ensure port 8080 is free
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "== Docker containers publishing 8080 =="
+          docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" | (head -n 1; grep -E "0\.0\.0\.0:8080->|:::8080->" || true)
+
+          ids="$(docker ps -q --filter "publish=8080" || true)"
+          if [ -n "${ids}" ]; then
+            echo "Stopping containers publishing 8080: ${ids}"
+            docker stop ${ids} || true
+            docker rm -f ${ids} || true
+          fi
+
+          echo "== Host processes listening on 8080 (if any) =="
+          if command -v ss >/dev/null 2>&1; then
+            ss -ltnp | grep -E ":8080\s" || true
+            if ss -ltnp | grep -qE ":8080\s"; then
+              echo "ERROR: Port 8080 is still in use by a host process. Stop that service on the runner."
+              exit 1
+            fi
+          elif command -v lsof >/dev/null 2>&1; then
+            lsof -iTCP:8080 -sTCP:LISTEN || true
+            if lsof -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+              echo "ERROR: Port 8080 is still in use by a host process. Stop that service on the runner."
+              exit 1
+            fi
+          else
+            echo "Neither ss nor lsof available. Skipping host process check."
+          fi
+
+      - name: Start app via docker compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          export COMPOSE_PROJECT_NAME="demoapp_${{ github.run_id }}_${{ github.run_attempt }}_active"
+          docker compose -f docker-compose.ci.yml up -d --build
+
+      - name: Wait for app health (debug-friendly)
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${{ inputs.zap_target }}/health"
+          echo "Waiting for: $URL"
+
+          for i in $(seq 1 90); do
+            code="$(curl -s -o /tmp/health_body.txt -w "%{http_code}" "$URL" || true)"
+            if [ "$code" = "200" ]; then
+              echo "App is healthy (200)"
+              exit 0
+            fi
+
+            echo "Attempt $i: HTTP $code"
+            echo "Body:"
+            head -n 40 /tmp/health_body.txt || true
             sleep 2
           done
 
@@ -265,17 +390,26 @@ jobs:
           exit 1
 
       - name: OWASP ZAP Full Scan (Active)
+        timeout-minutes: 25
+        shell: bash
         run: |
           docker run --rm \
             --network host \
             -v "${PWD}:/zap/wrk" \
             zaproxy/zap-stable \
             zap-full-scan.py \
-              -t "http://localhost:8080" \
+              -t "${{ inputs.zap_target }}" \
               -a \
               -j \
               -r zap-active-report.html \
               -J zap-active-report.json || true
+
+      - name: Ensure ZAP Active report files exist
+        if: always()
+        shell: bash
+        run: |
+          [ -f zap-active-report.html ] || echo "<html><body>No report generated</body></html>" > zap-active-report.html
+          [ -f zap-active-report.json ] || echo "{}" > zap-active-report.json
 
       - name: Upload ZAP Active reports
         if: always()
@@ -288,10 +422,9 @@ jobs:
 
       - name: Tear down
         if: always()
+        shell: bash
         run: |
-          docker compose -f docker-compose.ci.yml down -v || true
+          export COMPOSE_PROJECT_NAME="demoapp_${{ github.run_id }}_${{ github.run_attempt }}_active"
+          docker compose -f docker-compose.ci.yml down -v --remove-orphans || true
+          # optional cleanup for leftovers
           docker ps -aq | xargs -r docker rm -f || true
-
-
-
-
