@@ -220,9 +220,14 @@ jobs:
 
           ids="$(docker ps -q --filter "publish=8080" || true)"
           if [ -n "${ids}" ]; then
-            echo "Stopping containers publishing 8080: ${ids}"
-            docker stop ${ids} || true
-            docker rm -f ${ids} || true
+            echo "Found containers publishing 8080: ${ids}"
+            if docker stop ${ids}; then
+              docker rm -f ${ids} || true
+            else
+              echo "ERROR: Cannot stop containers on 8080 (permission denied)."
+              echo "Fix runner permissions (docker group / service user) or use a dedicated runner."
+              exit 1
+            fi
           fi
 
           echo "== Host processes listening on 8080 (if any) =="
