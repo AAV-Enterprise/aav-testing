@@ -311,6 +311,15 @@ jobs:
               -j \
               -r reports/zap-active.html \
               -J reports/zap-active.json || true
+      
+      - name: Debug - list reports
+        if: always()
+        shell: bash
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          ls -la reports || true
+          find reports -maxdepth 1 -type f -print || true
 
       - name: Ensure ZAP report files exist
         if: always()
