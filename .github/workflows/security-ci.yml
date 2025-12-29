@@ -193,7 +193,8 @@ jobs:
           name: trivy-image-report
           path: reports/trivy-image.json
 
-  dast_zap:
+    dast_zap:
+    # Runs when either baseline or active is requested
     if: ${{ inputs.run_dast_zap || inputs.run_dast_zap_active }}
     runs-on: self-hosted
     timeout-minutes: 35
@@ -201,17 +202,26 @@ jobs:
       - name: Docker access check
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           id
           docker info
 
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ensure reports folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+
       - name: Preflight - ensure port 8080 is free
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "== Docker containers publishing 8080 =="
+          docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" | (head -n 1; grep -E "0\.0\.0\.0:8080->|:::8080->" || true)
 
           ids="$(docker ps -q --filter "publish=8080" || true)"
           if [ -n "${ids}" ]; then
@@ -220,12 +230,21 @@ jobs:
             docker rm -f ${ids} || true
           fi
 
+          echo "== Host processes listening on 8080 (if any) =="
           if command -v ss >/dev/null 2>&1; then
+            ss -ltnp | grep -E ":8080\s" || true
             if ss -ltnp | grep -qE ":8080\s"; then
-              echo "ERROR: Port 8080 is still in use by a host process."
-              ss -ltnp | grep -E ":8080\s" || true
+              echo "ERROR: Port 8080 is still in use by a host process. Stop that service on the runner."
               exit 1
             fi
+          elif command -v lsof >/dev/null 2>&1; then
+            lsof -iTCP:8080 -sTCP:LISTEN || true
+            if lsof -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+              echo "ERROR: Port 8080 is still in use by a host process. Stop that service on the runner."
+              exit 1
+            fi
+          else
+            echo "Neither ss nor lsof available. Skipping host process check."
           fi
 
       - name: Start app via docker compose
@@ -236,7 +255,7 @@ jobs:
           docker compose -f docker-compose.ci.yml up -d --build
           docker compose -f docker-compose.ci.yml ps
 
-      - name: Wait for app health
+      - name: Wait for app health (debug-friendly)
         shell: bash
         run: |
           set -euo pipefail
@@ -249,22 +268,23 @@ jobs:
               echo "App is healthy (200)"
               exit 0
             fi
+
             echo "Attempt $i: HTTP $code"
+            echo "Body:"
             head -n 40 /tmp/health_body.txt || true
             sleep 2
           done
 
-          echo "App did not become healthy. Logs:"
+          echo "App did not become healthy. Showing compose status + logs:"
+          docker compose -f docker-compose.ci.yml ps || true
           docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
           exit 1
 
-      - name: Ensure reports folder
-        run: mkdir -p reports
-
-      - name: ZAP Baseline (optional)
+      - name: ZAP Baseline (passive)
         if: ${{ inputs.run_dast_zap }}
         shell: bash
         run: |
+          set -euo pipefail
           docker run --rm \
             --network host \
             -v "${PWD}:/zap/wrk" \
@@ -276,10 +296,11 @@ jobs:
               -r reports/zap-baseline.html \
               -J reports/zap-baseline.json || true
 
-      - name: ZAP Active (Full Scan)
+      - name: ZAP Active (full scan)
         if: ${{ inputs.run_dast_zap_active }}
         shell: bash
         run: |
+          set -euo pipefail
           docker run --rm \
             --network host \
             -v "${PWD}:/zap/wrk" \
@@ -295,10 +316,14 @@ jobs:
         if: always()
         shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p reports
           [ -f reports/zap-baseline.html ] || echo "<html><body>No baseline report generated</body></html>" > reports/zap-baseline.html
           [ -f reports/zap-baseline.json ] || echo "{}" > reports/zap-baseline.json
           [ -f reports/zap-active.html ] || echo "<html><body>No active report generated</body></html>" > reports/zap-active.html
           [ -f reports/zap-active.json ] || echo "{}" > reports/zap-active.json
+          echo "== reports/ contents =="
+          ls -la reports
 
       - name: Upload ZAP reports
         if: always()
@@ -306,12 +331,14 @@ jobs:
         with:
           name: zap-reports
           path: |
-            reports/zap-*.html
-            reports/zap-*.json
+            reports/*.html
+            reports/*.json
+          if-no-files-found: warn
 
       - name: Tear down
         if: always()
         shell: bash
         run: |
+          set -euo pipefail
           export COMPOSE_PROJECT_NAME="demoapp_${{ github.run_id }}_${{ github.run_attempt }}"
           docker compose -f docker-compose.ci.yml down -v --remove-orphans || true
