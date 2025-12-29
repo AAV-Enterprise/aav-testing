@@ -331,9 +331,10 @@ jobs:
         with:
           name: zap-reports
           path: |
-            reports/*.html
-            reports/*.json
+            reports/zap-*.html
+            reports/zap-*.json
           if-no-files-found: warn
+
 
       - name: Tear down
         if: always()
