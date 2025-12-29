@@ -28,9 +28,11 @@ on:
       run_dast_zap_active:
         type: boolean
         default: false
+
+      # IMPORTANT: scan via docker-compose network, not host localhost
       zap_target:
         type: string
-        default: "http://127.0.0.1:8080"
+        default: "http://app:8080"
 
 permissions:
   contents: read
@@ -197,7 +199,7 @@ jobs:
   dast_zap:
     if: ${{ inputs.run_dast_zap || inputs.run_dast_zap_active }}
     runs-on: self-hosted
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -224,25 +226,35 @@ jobs:
           docker compose -f docker-compose.ci.yml up -d --build
           docker compose -f docker-compose.ci.yml ps
 
-      - name: Wait for app health
+      - name: Detect compose network
+        shell: bash
+        run: |
+          set -euo pipefail
+          export COMPOSE_PROJECT_NAME="demoapp_${{ github.run_id }}_${{ github.run_attempt }}"
+          NET="${COMPOSE_PROJECT_NAME}_default"
+          echo "COMPOSE_NET=${NET}" >> "$GITHUB_ENV"
+          docker network ls | grep -F "$NET" || (echo "Network $NET not found" && exit 1)
+          echo "Using COMPOSE_NET=${NET}"
+
+      - name: Wait for app health (from inside compose network)
         shell: bash
         run: |
           set -euo pipefail
           URL="${{ inputs.zap_target }}/health"
+          echo "Waiting for: $URL"
+
           for i in $(seq 1 90); do
-            code="$(curl -s -o /tmp/health_body.txt -w "%{http_code}" "$URL" || true)"
-            if [ "$code" = "200" ]; then
-              echo "App is healthy"
+            if docker run --rm --network "${COMPOSE_NET}" curlimages/curl:8.5.0 -fsS "$URL" >/dev/null 2>&1; then
+              echo "App is healthy (reachable from compose network)"
               exit 0
             fi
             sleep 2
           done
+
+          echo "App did not become healthy. Showing compose logs:"
+          docker compose -f docker-compose.ci.yml ps || true
           docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
           exit 1
-
-
-
-
 
       - name: ZAP Baseline (passive)
         if: ${{ inputs.run_dast_zap }}
@@ -250,16 +262,16 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm \
-            --network host \
+            --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk" \
             -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
             -e http_proxy= -e https_proxy= -e all_proxy= \
-            -e NO_PROXY="127.0.0.1,localhost,zap" \
-            -e no_proxy="127.0.0.1,localhost,zap" \
+            -e NO_PROXY="app,localhost,127.0.0.1,zap" \
+            -e no_proxy="app,localhost,127.0.0.1,zap" \
             zaproxy/zap-stable \
             sh -lc '
               unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-              export NO_PROXY="127.0.0.1,localhost,zap"
+              export NO_PROXY="app,localhost,127.0.0.1,zap"
               export no_proxy="$NO_PROXY"
               zap-baseline.py \
                 -t "${{ inputs.zap_target }}" \
@@ -274,16 +286,16 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm \
-            --network host \
+            --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk" \
             -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
             -e http_proxy= -e https_proxy= -e all_proxy= \
-            -e NO_PROXY="127.0.0.1,localhost,zap" \
-            -e no_proxy="127.0.0.1,localhost,zap" \
+            -e NO_PROXY="app,localhost,127.0.0.1,zap" \
+            -e no_proxy="app,localhost,127.0.0.1,zap" \
             zaproxy/zap-stable \
             sh -lc '
               unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-              export NO_PROXY="127.0.0.1,localhost,zap"
+              export NO_PROXY="app,localhost,127.0.0.1,zap"
               export no_proxy="$NO_PROXY"
               zap-full-scan.py \
                 -t "${{ inputs.zap_target }}" \
@@ -296,7 +308,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          curl -s -o /tmp/health_after.txt -w "HTTP %{http_code}\n" http://127.0.0.1:8080/health || true
+          echo "Health from inside compose network:"
+          docker run --rm --network "${COMPOSE_NET}" curlimages/curl:8.5.0 -s -o /tmp/health_after.txt -w "HTTP %{http_code}\n" "${{ inputs.zap_target }}/health" || true
           cat /tmp/health_after.txt || true
           docker compose -f docker-compose.ci.yml ps || true
           docker compose -f docker-compose.ci.yml logs --no-color --tail=200 || true
