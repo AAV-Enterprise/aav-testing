@@ -256,6 +256,11 @@ jobs:
           docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
           exit 1
 
+      - name: Pull ZAP image (stable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/zaproxy/zaproxy:stable
       - name: ZAP Baseline (passive)
         if: ${{ inputs.run_dast_zap }}
         shell: bash
@@ -263,16 +268,17 @@ jobs:
           set -euo pipefail
           docker run --rm \
             --network "${COMPOSE_NET}" \
-            -v "${PWD}:/zap/wrk" \
+            -v "${PWD}:/zap/wrk:rw" \
             -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
             -e http_proxy= -e https_proxy= -e all_proxy= \
-            -e NO_PROXY="app,localhost,127.0.0.1,zap" \
-            -e no_proxy="app,localhost,127.0.0.1,zap" \
-            ghcr.io/zaproxy/zap-baseline:stable \
-              -t "${{ inputs.zap_target }}" \
-              -I -s \
-              -r reports/zap-baseline.html \
-              -J reports/zap-baseline.json || true
+            -e NO_PROXY="app,localhost,127.0.0.1" \
+            -e no_proxy="app,localhost,127.0.0.1" \
+            ghcr.io/zaproxy/zaproxy:stable \
+              zap-baseline.py \
+                -t "${{ inputs.zap_target }}" \
+                -I -s \
+                -r reports/zap-baseline.html \
+                -J reports/zap-baseline.json || true
 
       - name: ZAP Active (full scan)
         if: ${{ inputs.run_dast_zap_active }}
@@ -281,16 +287,17 @@ jobs:
           set -euo pipefail
           docker run --rm \
             --network "${COMPOSE_NET}" \
-            -v "${PWD}:/zap/wrk" \
+            -v "${PWD}:/zap/wrk:rw" \
             -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
             -e http_proxy= -e https_proxy= -e all_proxy= \
-            -e NO_PROXY="app,localhost,127.0.0.1,zap" \
-            -e no_proxy="app,localhost,127.0.0.1,zap" \
-            ghcr.io/zaproxy/zap-full-scan:stable \
-              -t "${{ inputs.zap_target }}" \
-              -a -j \
-              -r reports/zap-active.html \
-              -J reports/zap-active.json || true
+            -e NO_PROXY="app,localhost,127.0.0.1" \
+            -e no_proxy="app,localhost,127.0.0.1" \
+            ghcr.io/zaproxy/zaproxy:stable \
+              zap-full-scan.py \
+                -t "${{ inputs.zap_target }}" \
+                -a -j \
+                -r reports/zap-active.html \
+                -J reports/zap-active.json || true
 
       - name: Post-scan debug - app + compose logs
         if: always()
