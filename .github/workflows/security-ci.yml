@@ -290,13 +290,16 @@ jobs:
                 -a -j \
                 -r reports/zap-active.html \
                 -J reports/zap-active.json || true
-      '
+            '
 
-
-
-
-
-
+      - name: Post-scan debug - app + compose logs
+        if: always()
+        shell: bash
+        run: |
+          curl -s -o /tmp/health_after.txt -w "HTTP %{http_code}\n" http://127.0.0.1:8080/health || true
+          cat /tmp/health_after.txt || true
+          docker compose -f docker-compose.ci.yml ps || true
+          docker compose -f docker-compose.ci.yml logs --no-color --tail=200 || true
 
       - name: Ensure ZAP report files exist
         if: always()
