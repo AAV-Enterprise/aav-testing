@@ -305,7 +305,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zap-reports
-          path: reports/zap-*.html, reports/zap-*.json
+          path: |
+            reports/zap-*.html
+            reports/zap-*.json
 
       - name: Tear down
         if: always()
