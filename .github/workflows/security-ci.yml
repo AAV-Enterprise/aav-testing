@@ -256,23 +256,21 @@ jobs:
           docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
           exit 1
 
-      - name: Pull ZAP image (stable)
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker pull ghcr.io/zaproxy/zaproxy:stable
-
-
+      # IMPORTANT:
+      # - NU tragem imagini ZAP din GHCR (poate da "denied" pe runner)
+      # - folosim Docker Hub (zaproxy/zap2docker-stable) si rulam ZAP in reteaua compose
       - name: ZAP Baseline (passive)
         if: ${{ inputs.run_dast_zap }}
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm \
-            --network host \
+            --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk:rw" \
             -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
             -e http_proxy= -e https_proxy= -e all_proxy= \
+            -e NO_PROXY="app,localhost,127.0.0.1" \
+            -e no_proxy="app,localhost,127.0.0.1" \
             zaproxy/zap2docker-stable \
               zap-baseline.py \
                 -t "${{ inputs.zap_target }}" \
@@ -280,32 +278,24 @@ jobs:
                 -r reports/zap-baseline.html \
                 -J reports/zap-baseline.json || true
 
-
-
       - name: ZAP Active (full scan)
         if: ${{ inputs.run_dast_zap_active }}
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm \
-            --network host \
+            --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk:rw" \
             -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
             -e http_proxy= -e https_proxy= -e all_proxy= \
+            -e NO_PROXY="app,localhost,127.0.0.1" \
+            -e no_proxy="app,localhost,127.0.0.1" \
             zaproxy/zap2docker-stable \
               zap-full-scan.py \
                 -t "${{ inputs.zap_target }}" \
                 -a -j \
                 -r reports/zap-active.html \
                 -J reports/zap-active.json || true
-
-
-      - name: Debug - where are zap scripts
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm ghcr.io/zaproxy/zaproxy:stable sh -lc 'ls -la /zap/ || true; which zap-baseline.py || true; ls -la /zap/zap-baseline.py /zap/zap-full-scan.py 2>/dev/null || true'
-
 
       - name: Post-scan debug - app + compose logs
         if: always()
