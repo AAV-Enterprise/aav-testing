@@ -256,10 +256,7 @@ jobs:
           docker compose -f docker-compose.ci.yml logs --no-color --tail=300 || true
           exit 1
 
-      # IMPORTANT:
-      # - NU tragem imagini ZAP din GHCR (poate da "denied" pe runner)
-      # - folosim Docker Hub (zaproxy/zap2docker-stable) si rulam ZAP in reteaua compose
-      - name: ZAP Baseline (passive)
+      - name: Run ZAP baseline via Automation Framework
         if: ${{ inputs.run_dast_zap }}
         shell: bash
         run: |
@@ -267,18 +264,17 @@ jobs:
           docker run --rm \
             --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk:rw" \
-            -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
-            -e http_proxy= -e https_proxy= -e all_proxy= \
-            -e NO_PROXY="app,localhost,127.0.0.1" \
-            -e no_proxy="app,localhost,127.0.0.1" \
-            zaproxy/zap2docker-stable \
-              zap-baseline.py \
-                -t "${{ inputs.zap_target }}" \
-                -I -s \
-                -r reports/zap-baseline.html \
-                -J reports/zap-baseline.json || true
+            -w /zap/wrk \
+            zaproxy/zap-stable \
+            bash -lc '
+              chmod +x zap/run_zap_baseline.sh
+              TARGET="${{ inputs.zap_target }}" \
+              ZAP_REPORT="zap-baseline" \
+              ZAP_ALERT_REPORT="zap-baseline-alerts" \
+              zap/run_zap_baseline.sh
+            '
 
-      - name: ZAP Active (full scan)
+      - name: Run ZAP full via Automation Framework
         if: ${{ inputs.run_dast_zap_active }}
         shell: bash
         run: |
@@ -286,16 +282,15 @@ jobs:
           docker run --rm \
             --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk:rw" \
-            -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
-            -e http_proxy= -e https_proxy= -e all_proxy= \
-            -e NO_PROXY="app,localhost,127.0.0.1" \
-            -e no_proxy="app,localhost,127.0.0.1" \
-            zaproxy/zap2docker-stable \
-              zap-full-scan.py \
-                -t "${{ inputs.zap_target }}" \
-                -a -j \
-                -r reports/zap-active.html \
-                -J reports/zap-active.json || true
+            -w /zap/wrk \
+            zaproxy/zap-stable \
+            bash -lc '
+              chmod +x zap/run_zap_full.sh
+              TARGET="${{ inputs.zap_target }}" \
+              ZAP_REPORT="zap-full" \
+              ZAP_ALERT_REPORT="zap-full-alerts" \
+              zap/run_zap_full.sh
+          '
 
       - name: Post-scan debug - app + compose logs
         if: always()
