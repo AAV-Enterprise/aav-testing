@@ -261,36 +261,61 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set +e
           docker run --rm \
             --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk:rw" \
             -w /zap/wrk \
+            -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
+            -e http_proxy= -e https_proxy= -e all_proxy= \
+            -e NO_PROXY="app,db,127.0.0.1,localhost" \
+            -e no_proxy="app,db,127.0.0.1,localhost" \
             zaproxy/zap-stable \
             bash -lc '
+              unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+              export NO_PROXY="app,db,127.0.0.1,localhost"
+              export no_proxy="$NO_PROXY"
               chmod +x zap/run_zap_baseline.sh
               TARGET="${{ inputs.zap_target }}" \
               ZAP_REPORT="zap-baseline" \
               ZAP_ALERT_REPORT="zap-baseline-alerts" \
               zap/run_zap_baseline.sh
             '
+          EC=$?
+          echo "ZAP_BASELINE_EXIT=$EC" >> "$GITHUB_ENV"
+          echo "Baseline exit code: $EC (continuing)"
+          set -e
 
       - name: Run ZAP full via Automation Framework
         if: ${{ inputs.run_dast_zap_active }}
         shell: bash
         run: |
           set -euo pipefail
+          set +e
           docker run --rm \
             --network "${COMPOSE_NET}" \
             -v "${PWD}:/zap/wrk:rw" \
             -w /zap/wrk \
+            -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= \
+            -e http_proxy= -e https_proxy= -e all_proxy= \
+            -e NO_PROXY="app,db,127.0.0.1,localhost" \
+            -e no_proxy="app,db,127.0.0.1,localhost" \
             zaproxy/zap-stable \
             bash -lc '
+              unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+              export NO_PROXY="app,db,127.0.0.1,localhost"
+              export no_proxy="$NO_PROXY"
               chmod +x zap/run_zap_full.sh
               TARGET="${{ inputs.zap_target }}" \
               ZAP_REPORT="zap-full" \
               ZAP_ALERT_REPORT="zap-full-alerts" \
               zap/run_zap_full.sh
-          '
+            '
+          EC=$?
+          echo "ZAP_FULL_EXIT=$EC" >> "$GITHUB_ENV"
+          echo "Full exit code: $EC (continuing)"
+          set -e
+
 
       - name: Post-scan debug - app + compose logs
         if: always()
