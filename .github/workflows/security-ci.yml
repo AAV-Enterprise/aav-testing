@@ -3,6 +3,24 @@ name: Security CI (Reusable)
 on:
   workflow_call:
     inputs:
+      run_gitleaks:
+        type: boolean
+        default: true
+      run_semgrep:
+        type: boolean
+        default: true
+      run_trivy_fs:
+        type: boolean
+        default: true
+      run_trivy_image:
+        type: boolean
+        default: false
+      trivy_severity:
+        type: string
+        default: "HIGH,CRITICAL"
+      image_ref:
+        type: string
+        required: false
       run_dast_zap:
         type: boolean
         required: false
