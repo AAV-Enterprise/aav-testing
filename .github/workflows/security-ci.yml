@@ -273,6 +273,20 @@ jobs:
             -d "username=${{ secrets.ZAP_USER }}&password=${{ secrets.ZAP_PASS }}" \
             "${{ inputs.zap_target }}/login" >/dev/null || true
 
+      - name: Seed vuln-lab after login (debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Login and fetch /vuln-lab from inside compose net"
+
+          docker run --rm --network "${COMPOSE_NET}" curlimages/curl:8.5.0 -s -i \
+            -c /tmp/cookies.txt \
+            -d "username=zapuser&password=zappass123!" \
+            "http://app:8080/login" | head -n 60
+
+          docker run --rm --network "${COMPOSE_NET}" curlimages/curl:8.5.0 -s \
+            -b /tmp/cookies.txt \
+            "http://app:8080/vuln-lab" | head -n 60
 
       - name: ZAP full
         if: ${{ inputs.run_dast_zap_active }}
