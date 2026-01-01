@@ -1,0 +1,190 @@
+name: DevSecOps Reusable Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        type: string
+        required: false
+        default: "20"
+      compose_file:
+        type: string
+        required: false
+        default: "docker-compose.yml"
+      zap_target:
+        type: string
+        required: false
+        default: "http://localhost:8080"
+      backend_image:
+        type: string
+        required: false
+        default: "demo-backend:local"
+      frontend_image:
+        type: string
+        required: false
+        default: "demo-frontend:local"
+      fail_on_high:
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      SNYK_TOKEN:
+        required: false
+
+jobs:
+  sast_semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep (auto)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: "p/ci"
+        env:
+          SEMGREP_APP_TOKEN: ""
+
+  docker_build_and_test:
+    name: Build + Unit/Integration (Docker Compose)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build images + start stack
+        run: |
+          docker compose -f "${{ inputs.compose_file }}" up -d --build
+
+      - name: Wait for healthchecks
+        run: |
+          echo "Waiting for services..."
+          for i in {1..60}; do
+            if docker compose -f "${{ inputs.compose_file }}" ps | grep -q "healthy"; then
+              echo "At least one service is healthy. Continuing..."
+              break
+            fi
+            sleep 2
+          done
+          docker compose -f "${{ inputs.compose_file }}" ps
+
+      - name: Show logs (debug)
+        if: always()
+        run: |
+          docker compose -f "${{ inputs.compose_file }}" logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -f "${{ inputs.compose_file }}" down -v
+
+  container_scan_trivy:
+    name: Container Scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Build images (for scanning)
+        run: |
+          docker build -t "${{ inputs.backend_image }}" ./backend
+          docker build -t "${{ inputs.frontend_image }}" ./frontend
+
+      - name: Trivy scan backend image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "${{ inputs.backend_image }}"
+          format: "sarif"
+          output: "trivy-backend.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          ignore-unfixed: true
+
+      - name: Trivy scan frontend image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "${{ inputs.frontend_image }}"
+          format: "sarif"
+          output: "trivy-frontend.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          ignore-unfixed: true
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .
+
+  dast_zap:
+    name: DAST (OWASP ZAP Baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Start stack (for ZAP)
+        run: |
+          docker compose -f "${{ inputs.compose_file }}" up -d --build
+
+      - name: Wait for app
+        run: |
+          for i in {1..90}; do
+            if curl -fsS "${{ inputs.zap_target }}" >/dev/null; then
+              echo "App is up."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App not reachable."
+          exit 1
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: "${{ inputs.zap_target }}"
+          rules_file_name: ".zap/rules.tsv"
+          cmd_options: "-a -J zap-report.json -w zap-report.md -r zap-report.html"
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-reports
+          path: |
+            zap-report.json
+            zap-report.md
+            zap-report.html
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -f "${{ inputs.compose_file }}" down -v
+
+  sca_snyk_optional:
+    name: SCA (Snyk) - optional
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SNYK_TOKEN != '' }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Install Snyk
+        run: npm i -g snyk
+
+      - name: Snyk test (backend)
+        working-directory: backend
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          npm ci
+          snyk test --severity-threshold=high || ${{ inputs.fail_on_high }}
+
+      - name: Snyk test (frontend)
+        working-directory: frontend
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          npm ci
+          snyk test --severity-threshold=high || ${{ inputs.fail_on_high }}
