@@ -169,29 +169,36 @@ jobs:
       - name: Checkout caller repo
         uses: actions/checkout@v4
 
-      - name: Snyk not configured (skip)
-        if: ${{ secrets.SNYK_TOKEN == '' }}
-        run: |
-          echo "SNYK_TOKEN not set in caller repo secrets. Skipping Snyk steps."
-
-      - name: Install Snyk
-        if: ${{ secrets.SNYK_TOKEN != '' }}
-        run: npm i -g snyk
-
-      - name: Snyk test (backend)
-        if: ${{ secrets.SNYK_TOKEN != '' }}
-        working-directory: backend
+      - name: Install Snyk (if configured)
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "SNYK_TOKEN is not set. Skipping Snyk."
+            exit 0
+          fi
+          npm i -g snyk
+
+      - name: Snyk test (backend)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        working-directory: backend
+        run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "SNYK_TOKEN is not set. Skipping Snyk backend."
+            exit 0
+          fi
+
           npm ci
+
           set +e
           snyk test --severity-threshold=high
           code=$?
           set -e
+
           if [ $code -ne 0 ]; then
             if [ "${{ inputs.fail_on_high }}" = "true" ]; then
-              echo "Snyk found HIGH+ issues. Failing because fail_on_high=true."
+              echo "Snyk found HIGH+ issues. Failing (fail_on_high=true)."
               exit 1
             else
               echo "Snyk found HIGH+ issues, but fail_on_high=false. Continuing."
@@ -200,19 +207,25 @@ jobs:
           fi
 
       - name: Snyk test (frontend)
-        if: ${{ secrets.SNYK_TOKEN != '' }}
-        working-directory: frontend
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        working-directory: frontend
         run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "SNYK_TOKEN is not set. Skipping Snyk frontend."
+            exit 0
+          fi
+
           npm ci
+
           set +e
           snyk test --severity-threshold=high
           code=$?
           set -e
+
           if [ $code -ne 0 ]; then
             if [ "${{ inputs.fail_on_high }}" = "true" ]; then
-              echo "Snyk found HIGH+ issues. Failing because fail_on_high=true."
+              echo "Snyk found HIGH+ issues. Failing (fail_on_high=true)."
               exit 1
             else
               echo "Snyk found HIGH+ issues, but fail_on_high=false. Continuing."
