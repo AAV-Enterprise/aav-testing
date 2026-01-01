@@ -254,30 +254,21 @@ jobs:
           mkdir -p reports
           ls -la reports
 
-      - name: ZAP baseline
-        if: ${{ inputs.run_dast_zap }}
-        continue-on-error: true
+      - name: Debug login from inside compose net
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            --network "${COMPOSE_NET}" \
-            -v "${PWD}:/zap/wrk:rw" \
-            -w /zap/wrk \
-            -e ZAP_USER="${{ secrets.ZAP_USER }}" \
-            -e ZAP_PASS="${{ secrets.ZAP_PASS }}" \
-            -e NO_PROXY="app,db,127.0.0.1,localhost" \
-            -e no_proxy="app,db,127.0.0.1,localhost" \
-            zaproxy/zap-stable \
-            bash -lc '
-              set -e
-              chmod +x zap/run_zap_baseline.sh
-              TARGET="${{ inputs.zap_target }}" \
-              ZAP_REPORT="zap-baseline" \
-              ZAP_ALERT_REPORT="zap-baseline-alerts" \
-              zap/run_zap_baseline.sh
-            '
-          echo "BASELINE_EXIT=$?" >> "$GITHUB_ENV"
+          docker run --rm --network "${COMPOSE_NET}" curlimages/curl:8.5.0 -i -s \
+            -c /tmp/cookies.txt \
+            -d "username=${{ secrets.ZAP_USER }}&password=${{ secrets.ZAP_PASS }}" \
+            "${{ inputs.zap_target }}/login" | head -n 60
+
+          echo "Cookies:"
+          docker run --rm --network "${COMPOSE_NET}" curlimages/curl:8.5.0 -s \
+            -c /tmp/cookies.txt -o /dev/null \
+            -d "username=${{ secrets.ZAP_USER }}&password=${{ secrets.ZAP_PASS }}" \
+            "${{ inputs.zap_target }}/login" >/dev/null || true
+
 
       - name: ZAP full
         if: ${{ inputs.run_dast_zap_active }}
