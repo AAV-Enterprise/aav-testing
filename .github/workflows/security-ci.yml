@@ -28,12 +28,12 @@ on:
       run_dast_zap_active:
         type: boolean
         default: false
-      zap_user:
-        required: false
-        type: string
-      zap_pass:
-        required: false
-        type: string
+
+      secrets:
+        ZAP_USER:
+          required: false
+        ZAP_PASS:
+          required: false
 
       # IMPORTANT: scan via docker-compose network, not host localhost
       zap_target:
