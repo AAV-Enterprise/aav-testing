@@ -39,7 +39,7 @@ jobs:
             -j
             -m 5
             -T 300
-          rules_file_name: '.zap/rules.tsv'
+          rules_file_name: '../.zap/rules.tsv'
           allow_issue_writing: false
           fail_action: true
       - name: Oprire și curățare servicii
