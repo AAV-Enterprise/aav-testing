@@ -1,0 +1,38 @@
+name: OWASP ZAP Full Scan
+on:
+  workflow_call:
+    inputs: {}
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Instalare Docker Compose
+        run: sudo apt-get update && sudo apt-get install -y docker-compose
+      - name: Build & Start servicii Docker
+        run: docker-compose up -d --build
+      - name: Așteaptă pornirea serviciilor
+        run: |
+          for i in `seq 1 30`; do
+            # Așteaptă backend
+            curl -s http://localhost:3000/api/posts && break
+            echo "Așteaptă backend..."
+            sleep 2
+          done
+          for i in `seq 1 30`; do
+            # Așteaptă frontend
+            curl -s http://localhost:8080 && break
+            echo "Așteaptă frontend..."
+            sleep 2
+          done
+      - name: Rulare OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.13.0
+        with:
+          target: 'http://localhost:8080'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_action: true
+          allow_issue_writing: false
+      - name: Oprire și curățare servicii
+        if: always()
+        run: docker-compose down
