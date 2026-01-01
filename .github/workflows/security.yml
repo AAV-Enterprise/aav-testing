@@ -31,14 +31,17 @@ jobs:
             echo "Așteaptă /zap.html..."
             sleep 2
           done
-      - name: Rulare OWASP ZAP Full Scan (seeded)
+      - name: Rulare OWASP ZAP Full Scan (bounded & seeded)
         uses: zaproxy/action-full-scan@v0.13.0
         with:
-          target: 'http://localhost:8080/zap.html'
-          cmd_options: '-j'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          target: 'http://localhost:8080/'
+          cmd_options: >
+            -j
+            -m 5
+            -T 300
+          rules_file_name: '.zap/rules.tsv'
           allow_issue_writing: false
-          fail_action: false
+          fail_action: true
       - name: Oprire și curățare servicii
         if: always()
         run: docker-compose down -v
