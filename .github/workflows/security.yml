@@ -6,7 +6,8 @@ on:
       mode:
         description: "Security mode: vuln or safe"
         required: true
-        default: "vuln"
+        default: "safe"
+        type: string
 
 jobs:
   ZapScan:
