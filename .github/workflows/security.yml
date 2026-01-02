@@ -2,8 +2,59 @@ name: OWASP ZAP Full Scan
 on:
   workflow_call:
     inputs: {}
+  pull_request:
+  push:
+    branches: ["main"]
+
+env:
+  COMPOSE_PROJECT_NAME: demoapp
 
 jobs:
+  sast_semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep (SAST)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/owasp-top-ten
+
+  secrets_gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks (Secrets Scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  container_trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images (docker compose)
+        run: docker compose build
+
+      # IMPORTANT: imaginile rezultate vor fi demoapp_backend:latest și demoapp_frontend:latest
+      - name: Trivy scan backend image (MEDIUM+)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: demoapp_backend:latest
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: MEDIUM,HIGH,CRITICAL
+
+      - name: Trivy scan frontend image (MEDIUM+)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: demoapp_frontend:latest
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: MEDIUM,HIGH,CRITICAL
+
   zap_scan:
     runs-on: ubuntu-latest
     steps:
@@ -34,14 +85,11 @@ jobs:
       - name: Rulare OWASP ZAP Full Scan (bounded & seeded)
         uses: zaproxy/action-full-scan@v0.13.0
         with:
-          target: 'http://localhost:8080/search-share?q=test'
-          cmd_options: >
-            -j
-            -m 5
-            -T 300
-          rules_file_name: '.zap/rules.tsv'
-          allow_issue_writing: false
+          target: 'http://localhost:8080/'
+          cmd_options: '-m 2 -T 5'
           fail_action: true
+          allow_issue_writing: false
+          rules_file_name: '.zap/rules.tsv'
       - name: Oprire și curățare servicii
         if: always()
         run: docker-compose down -v
