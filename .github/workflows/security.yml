@@ -51,10 +51,17 @@ jobs:
             -j
             -m 5
             -T 300
-            -l MEDIUM
           rules_file_name: '.zap/rules.tsv'
           allow_issue_writing: false
-          fail_action: true
+      - name: Fail if MEDIUM/HIGH alerts exist
+        run: |
+          test -f report_json.json || (echo "Missing report_json.json" && ls -la && exit 2)
+          count=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) >= 2)] | length' report_json.json)
+          echo "ZAP alerts MEDIUM+ = $count"
+          if [ "$count" -gt 0 ]; then
+            echo "Failing: found MEDIUM/HIGH alerts"
+            exit 1
+          fi
       - name: Stop and clean-up
         if: always()
         run: docker-compose down -v
