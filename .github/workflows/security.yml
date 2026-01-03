@@ -20,7 +20,6 @@ jobs:
   Trivy:
     name: Container Scan
     runs-on: ubuntu-latest
-    needs: [Secrets-Gitleaks]
     outputs:
       backend_high: ${{ steps.trivy_counts.outputs.backend_high }}
       frontend_high: ${{ steps.trivy_counts.outputs.frontend_high }}
@@ -90,7 +89,6 @@ jobs:
   SCA:
     name: SCA (OSV-Scanner)
     runs-on: ubuntu-latest
-    needs: [SAST]
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v4
@@ -107,7 +105,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       zap_high: ${{ steps.zap_counts.outputs.zap_high }}
-    needs: [SCA]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
