@@ -33,7 +33,7 @@ jobs:
       - name: Build images
         run: docker compose build
 
-            - name: Trivy backend (report only)
+      - name: Trivy backend (report only)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: demoapp_backend:latest
