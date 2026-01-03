@@ -18,14 +18,7 @@ jobs:
       - name: Installing Docker Compose
         run: sudo apt-get update && sudo apt-get install -y docker-compose
       - name: Build & Start Docker services
-        run: |
-          if [ "${{ inputs.mode }}" = "safe" ]; then
-            echo "Running in SAFE mode"
-            docker-compose --env-file .env.safe up -d --build
-          else
-            echo "Running in VULNERABLE mode"
-            docker-compose --env-file .env.vuln up -d --build
-          fi
+        run: docker-compose up -d --build
       - name: Waiting services
         run: |
           for i in `seq 1 60`; do
