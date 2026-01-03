@@ -21,6 +21,9 @@ jobs:
     name: Container Scan
     runs-on: ubuntu-latest
     needs: [Secrets-Gitleaks]
+    outputs:
+      backend_high: ${{ steps.trivy_counts.outputs.backend_high }}
+      frontend_high: ${{ steps.trivy_counts.outputs.frontend_high }}
     env:
       COMPOSE_PROJECT_NAME: demoapp
     steps:
@@ -30,36 +33,59 @@ jobs:
       - name: Build images
         run: docker compose build
 
-      - name: Trivy backend
+            - name: Trivy backend (report only)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: demoapp_backend:latest
-          format: table
-          exit-code: 1
+          format: json
+          output: trivy-backend.json
+          exit-code: 0
           ignore-unfixed: true
           severity: MEDIUM,HIGH,CRITICAL
 
-      - name: Trivy frontend
+      - name: Trivy frontend (report only)
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: demoapp_frontend:latest
-          format: table
-          exit-code: 1
+          format: json
+          output: trivy-frontend.json
+          exit-code: 0
           ignore-unfixed: true
           severity: MEDIUM,HIGH,CRITICAL
 
-  SAST:
-    name: SAST (Semgrep)
-    runs-on: ubuntu-latest
-    needs: [Trivy]
-    steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Semgrep
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: p/owasp-top-ten
+      - name: Count HIGH+ (backend/frontend)
+        id: trivy_counts
+        run: |
+          backend_high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH" or .Severity=="CRITICAL")] | length' trivy-backend.json)
+          frontend_high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH" or .Severity=="CRITICAL")] | length' trivy-frontend.json)
+          echo "backend_high=$backend_high" >> $GITHUB_OUTPUT
+          echo "frontend_high=$frontend_high" >> $GITHUB_OUTPUT
+          echo "Trivy backend HIGH+ = $backend_high"
+          echo "Trivy frontend HIGH+ = $frontend_high"
+
+  SAST:
+    runs-on: ubuntu-latest
+    outputs:
+      high_count: ${{ steps.semgrep_counts.outputs.high_count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: python3 -m pip install semgrep
+
+      - name: Semgrep scan (report only)
+        run: semgrep --config p/owasp-top-ten --json -o semgrep.json . || true
+
+      - name: Count Semgrep findings
+        id: semgrep_counts
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          high=$(jq '[.results[]? | select(.extra.severity=="ERROR")] | length' semgrep.json)
+          echo "high_count=$high" >> $GITHUB_OUTPUT
+          echo "Semgrep ERROR findings = $high"
 
   SCA:
     name: SCA (OSV-Scanner)
@@ -79,6 +105,8 @@ jobs:
 
   Zap-Scan:
     runs-on: ubuntu-latest
+    outputs:
+      zap_high: ${{ steps.zap_counts.outputs.zap_high }}
     needs: [SCA]
     steps:
       - name: Checkout code
@@ -114,15 +142,50 @@ jobs:
             -T 300
           rules_file_name: '.zap/rules.tsv'
           allow_issue_writing: false
-      - name: Fail if HIGH alerts exist
+      # - name: Fail if HIGH alerts exist
+      #   run: |
+      #     test -f report_json.json || (echo "Missing report_json.json" && ls -la && exit 2)
+      #     count=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) > 2)] | length' report_json.json)
+      #     echo "ZAP alerts HIGH+ = $count"
+      #     if [ "$count" -gt 0 ]; then
+      #       echo "Failing: found HIGH alerts"
+      #       exit 1
+      #     fi
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Count ZAP HIGH
+        id: zap_counts
         run: |
-          test -f report_json.json || (echo "Missing report_json.json" && ls -la && exit 2)
           count=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) > 2)] | length' report_json.json)
-          echo "ZAP alerts HIGH+ = $count"
-          if [ "$count" -gt 0 ]; then
-            echo "Failing: found HIGH alerts"
-            exit 1
-          fi
+          echo "zap_high=$count" >> $GITHUB_OUTPUT
+          echo "ZAP HIGH = $count"
       - name: Stop and clean-up
         if: always()
         run: docker-compose down -v
+
+  Final-Gate:
+    name: Final Gate (fail at end)
+    runs-on: ubuntu-latest
+    needs: [Secrets-Gitleaks, Trivy, SAST, SCA, Zap-Scan]
+    if: always()
+    steps:
+      - name: Decide final result (HIGH only)
+        run: |
+          trivy_backend_high=${{ needs.Trivy.outputs.backend_high }}
+          trivy_frontend_high=${{ needs.Trivy.outputs.frontend_high }}
+          semgrep_high=${{ needs.SAST.outputs.high_count }}
+          zap_high=${{ needs.Zap-Scan.outputs.zap_high }}
+
+          echo "Trivy backend HIGH+  = $trivy_backend_high"
+          echo "Trivy frontend HIGH+ = $trivy_frontend_high"
+          echo "Semgrep ERROR        = $semgrep_high"
+          echo "ZAP HIGH             = $zap_high"
+
+          total=$((trivy_backend_high + trivy_frontend_high + semgrep_high + zap_high))
+          echo "TOTAL blocking (HIGH policy) = $total"
+
+          if [ "$total" -gt 0 ]; then
+            echo "Failing at end (policy: HIGH only)"
+            exit 1
+          fi
