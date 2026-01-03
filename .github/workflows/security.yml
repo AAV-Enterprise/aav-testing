@@ -86,15 +86,14 @@ jobs:
           echo "high_count=$high" >> $GITHUB_OUTPUT
           echo "Semgrep ERROR findings = $high"
 
-  SCA:
+    SCA:
     name: SCA (OSV-Scanner)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action@v1.7.1
+        uses: google/osv-scanner-action@v2
         with:
           scan-args: |-
             --recursive
