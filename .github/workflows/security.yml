@@ -87,18 +87,57 @@ jobs:
           echo "Semgrep ERROR findings = $high"
 
   SCA:
-    name: SCA (OSV-Scanner)
+    name: SCA (npm audit)
     runs-on: ubuntu-latest
+    needs: [SAST]
+    outputs:
+      backend_high: ${{ steps.audit_counts.outputs.backend_high }}
+      frontend_high: ${{ steps.audit_counts.outputs.frontend_high }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run OSV-Scanner
-        uses: google/osv-scanner-action@v2
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          scan-args: |-
-            --recursive
-            ./backend
-            ./frontend
+          node-version: "18"
+
+      - name: Backend - npm ci
+        working-directory: backend
+        run: npm ci
+
+      - name: Frontend - npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: Backend - npm audit (json)
+        working-directory: backend
+        run: |
+          npm audit --json > audit-backend.json || true
+
+      - name: Frontend - npm audit (json)
+        working-directory: frontend
+        run: |
+          npm audit --json > audit-frontend.json || true
+
+      - name: Count HIGH/CRITICAL from npm audit
+        id: audit_counts
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          backend_high=$(jq '[.. | objects | select(has("severity")) | select(.severity=="high" or .severity=="critical")] | length' backend/audit-backend.json)
+          frontend_high=$(jq '[.. | objects | select(has("severity")) | select(.severity=="high" or .severity=="critical")] | length' frontend/audit-frontend.json)
+          echo "backend_high=$backend_high" >> $GITHUB_OUTPUT
+          echo "frontend_high=$frontend_high" >> $GITHUB_OUTPUT
+          echo "npm audit backend HIGH+ = $backend_high"
+          echo "npm audit frontend HIGH+ = $frontend_high"
+
+      - name: Upload npm audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-reports
+          path: |
+            backend/audit-backend.json
+            frontend/audit-frontend.jso
 
   Zap-Scan:
     runs-on: ubuntu-latest
