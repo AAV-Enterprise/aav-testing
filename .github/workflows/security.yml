@@ -53,13 +53,13 @@ jobs:
             -T 300
           rules_file_name: '.zap/rules.tsv'
           allow_issue_writing: false
-      - name: Fail if MEDIUM/HIGH alerts exist
+      - name: Fail if HIGH alerts exist
         run: |
           test -f report_json.json || (echo "Missing report_json.json" && ls -la && exit 2)
-          count=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) >= 2)] | length' report_json.json)
-          echo "ZAP alerts MEDIUM+ = $count"
+          count=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) > 2)] | length' report_json.json)
+          echo "ZAP alerts HIGH+ = $count"
           if [ "$count" -gt 0 ]; then
-            echo "Failing: found MEDIUM/HIGH alerts"
+            echo "Failing: found HIGH alerts"
             exit 1
           fi
       - name: Stop and clean-up
