@@ -5,18 +5,6 @@ on:
     inputs: {}
 
 jobs:
-  SAST:
-    name: SAST (Semgrep)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v4
-
-      - name: Semgrep
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: p/owasp-top-ten
-
   Secrets-Gitleaks:
     name: Secrets (Gitleaks)
     runs-on: ubuntu-latest
@@ -28,10 +16,11 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+  
   Trivy:
     name: Container Scan
     runs-on: ubuntu-latest
+    needs: [Secrets-Gitleaks]
     env:
       COMPOSE_PROJECT_NAME: demoapp
     steps:
@@ -59,9 +48,23 @@ jobs:
           ignore-unfixed: true
           severity: MEDIUM,HIGH,CRITICAL
 
+  SAST:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    needs: [Trivy]
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/owasp-top-ten
+
   SCA:
     name: SCA (OSV-Scanner)
     runs-on: ubuntu-latest
+    needs: [SAST]
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v4
@@ -76,7 +79,7 @@ jobs:
 
   Zap-Scan:
     runs-on: ubuntu-latest
-    needs: [SAST, Secrets-Gitleaks, Trivy, SCA]
+    needs: [SCA]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
