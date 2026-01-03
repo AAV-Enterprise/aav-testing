@@ -2,12 +2,7 @@ name: OWASP ZAP Full Scan
 
 on:
   workflow_call:
-    inputs:
-      mode:
-        description: "Security mode: vuln or safe"
-        required: true
-        default: "safe"
-        type: string
+    inputs: {}
 
 jobs:
   ZapScan:
