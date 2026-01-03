@@ -89,7 +89,6 @@ jobs:
   SCA:
     name: SCA (npm audit)
     runs-on: ubuntu-latest
-    needs: [SAST]
     outputs:
       backend_high: ${{ steps.audit_counts.outputs.backend_high }}
       frontend_high: ${{ steps.audit_counts.outputs.frontend_high }}
@@ -175,17 +174,7 @@ jobs:
             -j
             -m 5
             -T 300
-          rules_file_name: '.zap/rules.tsv'
           allow_issue_writing: false
-      # - name: Fail if HIGH alerts exist
-      #   run: |
-      #     test -f report_json.json || (echo "Missing report_json.json" && ls -la && exit 2)
-      #     count=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) > 2)] | length' report_json.json)
-      #     echo "ZAP alerts HIGH+ = $count"
-      #     if [ "$count" -gt 0 ]; then
-      #       echo "Failing: found HIGH alerts"
-      #       exit 1
-      #     fi
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
